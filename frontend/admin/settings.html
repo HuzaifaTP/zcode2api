@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>zcode-hub · 设置</title>
+  <title>zcode-hub · Settings</title>
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="/static/css/app.css?v={{APP_VERSION}}" rel="stylesheet">
 </head>
@@ -13,51 +13,51 @@
 <main class="admin-main">
   <div class="page-hd">
     <div>
-      <div class="page-title">设置</div>
-      <div class="page-sub">后台鉴权密钥与网关访问控制</div>
+      <div class="page-title">Settings</div>
+      <div class="page-sub">Admin key and gateway access control</div>
     </div>
   </div>
 
   <div class="settings-card">
-    <div class="section-title" style="margin-bottom:16px">鉴权</div>
+    <div class="section-title" style="margin-bottom:16px">Auth</div>
     <div class="settings-row">
-      <label>后台密码</label>
-      <div class="hint">用于登录此管理后台。修改后需用新密码重新登录。</div>
-      <input class="input" id="admin-key" type="password" placeholder="后台密码" autocomplete="new-password">
-      <div class="hint" id="admin-key-default-hint" style="display:none;color:var(--amber)">当前仍是默认口令，生产环境请立即更换。</div>
+      <label>Admin password</label>
+      <div class="hint">Used to sign in to this admin panel. After changing it you must sign in again.</div>
+      <input class="input" id="admin-key" type="password" placeholder="Admin password" autocomplete="new-password">
+      <div class="hint" id="admin-key-default-hint" style="display:none;color:var(--amber)">Still using the default password — change it immediately in production.</div>
     </div>
     <div class="settings-row">
-      <label>网关 API Key（可选）</label>
-      <div class="hint">设置后，调用 <code>/v1/messages</code> 须携带 <code>Authorization: Bearer &lt;key&gt;</code> 或 <code>x-api-key</code>。清空并保存可关闭校验（生产必须配置）。输入框显示掩码，未改动保存不会覆盖原值。</div>
-      <input class="input" id="gateway-key" type="password" placeholder="留空表示不启用" autocomplete="new-password">
+      <label>Gateway API key (optional)</label>
+      <div class="hint">Once set, calls <code>/v1/messages</code> must send <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code>. Clear and save to disable the check (must be set in production). The field shows a mask; saving without edits keeps the original value.</div>
+      <input class="input" id="gateway-key" type="password" placeholder="leave blank to disable" autocomplete="new-password">
     </div>
     <div class="settings-row">
-      <label>额度刷新间隔（秒）</label>
-      <div class="hint">后台自动刷新各账号额度与状态的周期。设为 0 关闭自动刷新（仍可手动刷新）。修改后即时生效。</div>
+      <label>Quota refresh interval (seconds)</label>
+      <div class="hint">How often to auto-refresh each account's quota and status. 0 disables auto-refresh (manual refresh still works). Takes effect immediately.</div>
       <input class="input" id="quota-interval" type="number" min="0" step="5" placeholder="60">
     </div>
     <div class="settings-row">
-      <label>单账号并发上限</label>
-      <div class="hint">每个账号同时处理的最大请求数；某账号并发满时自动切下一个账号。设为 0 不限制。修改后即时生效。</div>
+      <label>Per-account concurrency limit</label>
+      <div class="hint">Max concurrent requests per account. When an account is full the next one is used. 0 = unlimited. Takes effect immediately.</div>
       <input class="input" id="account-concurrency" type="number" min="0" step="1" placeholder="2">
     </div>
     <div class="settings-row">
-      <label>套餐自动领取轮（秒）</label>
-      <div class="hint">周期对全部 JWT 账号执行活动套餐领取（激活上报 + 查询 + 领取）。设为 0 关闭轮次，仅入池/手动触发。默认 600（10 分钟）。修改后即时生效。</div>
+      <label>Campaign claim round (seconds)</label>
+      <div class="hint">Interval for the campaign-claim round across all JWT accounts (activation report + query + claim). 0 disables the round; only on-join and manual triggers run. Default 600 (10 min). Takes effect immediately.</div>
       <input class="input" id="claim-round-interval" type="number" min="0" step="30" placeholder="600">
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
-      <button onclick="saveSettings()" class="dialog-btn dialog-btn-primary">保存</button>
+      <button onclick="saveSettings()" class="dialog-btn dialog-btn-primary">Save</button>
     </div>
   </div>
 
   <div class="settings-card">
-    <div class="section-title" style="margin-bottom:12px">使用说明</div>
+    <div class="section-title" style="margin-bottom:12px">Usage notes</div>
     <div class="hint" style="line-height:1.9">
-      · 在「账号池」粘贴 Coding Plan JWT 或 API Key 即可加入轮询。<br>
-      · 请求按 round-robin 分发；某账号额度用完会自动切到下一个账号。<br>
-      · 账号额度、状态在「账号池」页实时刷新展示。<br>
-      · 对话端点：<code id="endpoint">/v1/messages</code>（兼容 Anthropic Messages 协议）。
+      · Paste a Coding Plan JWT or API Key into Accounts to join the rotation.<br>
+      · Requests are distributed round-robin; when an account runs out of quota the next one is used.<br>
+      · Quota and status are refreshed live on the Accounts page.<br>
+      · Chat endpoint: <code id="endpoint">/v1/messages</code> (Anthropic Messages compatible).
     </div>
   </div>
 </main>
@@ -84,7 +84,7 @@ async function load(){
     document.getElementById('claim-round-interval').value=d.claim_round_interval??600;
     const hint=document.getElementById('admin-key-default-hint');
     if(hint) hint.style.display=d.admin_key_is_default?'block':'none';
-  }catch(e){showToast('加载失败: '+e.message,'error');}
+  }catch(e){showToast('Load failed:  '+e.message,'error');}
 }
 
 function _isSecretMask(v){
@@ -96,19 +96,19 @@ async function saveSettings(){
   const gateway_key=document.getElementById('gateway-key').value.trim();
   const quota_refresh_interval=parseInt(document.getElementById('quota-interval').value,10);
   const account_concurrency=parseInt(document.getElementById('account-concurrency').value,10);
-  if(!admin_key)return showToast('后台密码不能为空','error');
-  if(isNaN(quota_refresh_interval)||quota_refresh_interval<0)return showToast('刷新间隔必须是非负整数','error');
-  if(isNaN(account_concurrency)||account_concurrency<0)return showToast('账号并发必须是非负整数（0 = 不限）','error');
+  if(!admin_key)return showToast('Admin password cannot be empty','error');
+  if(isNaN(quota_refresh_interval)||quota_refresh_interval<0)return showToast('Refresh interval must be a non-negative integer','error');
+  if(isNaN(account_concurrency)||account_concurrency<0)return showToast('Account concurrency must be a non-negative integer (0 = unlimited)','error');
   const claim_round_interval=parseInt(document.getElementById('claim-round-interval').value,10);
-  if(isNaN(claim_round_interval)||claim_round_interval<0)return showToast('自动领取轮间隔必须是非负整数（0 = 关闭）','error');
+  if(isNaN(claim_round_interval)||claim_round_interval<0)return showToast('Auto-claim interval must be a non-negative integer (0 = off)','error');
   const payload={quota_refresh_interval,account_concurrency,claim_round_interval};
   if(!_isSecretMask(admin_key)) payload.admin_key=admin_key;
   if(!_isSecretMask(gateway_key)) payload.gateway_key=gateway_key;
   try{
     await api('PUT','/settings',payload);
     if(payload.admin_key) await adminKey.set(payload.admin_key);
-    showToast('已保存','success');
-  }catch(e){showToast('保存失败: '+e.message,'error');}
+    showToast('Saved','success');
+  }catch(e){showToast('Save failed:  '+e.message,'error');}
 }
 </script>
 </body>

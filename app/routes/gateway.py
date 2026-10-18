@@ -20,7 +20,7 @@ from ..agent import build_request
 from ..auth_admin import verify_gateway_key
 from ..captcha import captcha_manager
 from ..models import Account, Status
-from ..openai_compat import StreamConverter, anthropic_to_openai, openai_to_anthropic
+from ..openai_compat import StreamConverter, _as_int, anthropic_to_openai, openai_to_anthropic
 from ..quota import fetch_quota
 from ..store import store
 
@@ -221,7 +221,7 @@ async def messages(request: Request):
     if isinstance(result, _Upstream):
         # dispatch 返回与流式生成器启动之间的取消窗口：兜底关闭释放并发槽位
         try:
-            return result.to_streaming(req_id)
+            return result.to_streaming(req_id, stream=bool(body.get("stream")))
         except asyncio.CancelledError:
             await result.close()
             raise
@@ -290,8 +290,14 @@ async def chat_completions(request: Request):
         reqlog.finish_error(req_id, "上游响应格式异常", status=502, t_first=result.t_first)
         return JSONResponse({"error": {"message": "上游响应格式异常", "type": "upstream_error"}}, status_code=502)
     usage = data.get("usage") or {}
+    # Record the FULL prompt (uncached + cached) and the cached slice, matching what
+    # the client is told. `input_tokens` alone is the non-cached portion only.
+    cached = (_as_int(usage.get("cache_read_input_tokens")) or 0) \
+        + (_as_int(usage.get("cache_creation_input_tokens")) or 0)
     reqlog.finish_ok(req_id, t_first=result.t_first, status=result.resp.status_code,
-                     input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"))
+                     input_tokens=(_as_int(usage.get("input_tokens")) or 0) + cached,
+                     output_tokens=usage.get("output_tokens"),
+                     cached_tokens=_as_int(usage.get("cache_read_input_tokens")) or 0)
     return JSONResponse(anthropic_to_openai(data, model))
 
 
@@ -316,7 +322,8 @@ def _openai_stream_response(up: _Upstream, model: str, req_id: str) -> Streaming
             logs.req_ok(req_id)
             reqlog.finish_ok(req_id, t_first=up.t_first, status=up.resp.status_code,
                              input_tokens=conv.usage.get("prompt_tokens"),
-                             output_tokens=conv.usage.get("completion_tokens"))
+                             output_tokens=conv.usage.get("completion_tokens"),
+                             cached_tokens=(conv.usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
         except asyncio.CancelledError:
             reqlog.finish_error(req_id, "客户端断开", status=499, t_first=up.t_first)
             raise
@@ -341,9 +348,10 @@ async def _dispatch(req_id, body, incoming_headers, port, provider):
     tried: set[str] = set()
     limit = _limit()
     attempts = 0
+    want_model = str(body.get("model") or "") or None
 
     while attempts < MAX_ACCOUNT_ATTEMPTS:
-        account = store.select(provider, skip_ids=tried)
+        account = store.select(provider, skip_ids=tried, model=want_model)
         if account is None:
             break
         tried.add(account.id)
@@ -452,11 +460,12 @@ def _limit() -> int:
 class _Upstream:
     """已建立的上游成功流：由调用方消费并负责关闭。"""
 
-    __slots__ = ("resp", "cm", "client", "t_first", "account_name", "mode", "on_close", "_closed")
+    __slots__ = ("resp", "cm", "client", "t_first", "account_name", "mode", "on_close",
+                 "_closed", "buffered")
 
     def __init__(self, resp: httpx.Response, cm, client: httpx.AsyncClient,
                  t_first: float | None = None, account_name: str = "", mode: str = "",
-                 on_close=None) -> None:
+                 on_close=None, buffered: bytes | None = None) -> None:
         self.resp = resp
         self.cm = cm
         self.client = client
@@ -464,6 +473,7 @@ class _Upstream:
         self.account_name = account_name
         self.mode = mode
         self.on_close = on_close
+        self.buffered = buffered
         self._closed = False
 
     async def close(self) -> None:
@@ -479,16 +489,66 @@ class _Upstream:
             except Exception:  # noqa: BLE001 - 槽位释放失败不掩盖主流程
                 pass
 
-    def to_streaming(self, req_id: str) -> StreamingResponse:
-        """原样透传（/v1/messages 直通路径）。"""
+    def to_streaming(self, req_id: str, stream: bool = True) -> StreamingResponse:
+        """原样透传（/v1/messages 直通路径）。
+
+        Pass-through is byte-for-byte, but usage still has to reach the monitoring
+        page — so the chunks are sniffed on the way out:
+          - non-stream: the body is one JSON document; keep it and read `usage`.
+          - stream:     scan SSE lines for `message_start` / `message_delta` usage.
+        Only usage-bearing lines are retained, so memory stays bounded.
+        """
         up = self
 
+        def _usage_from_obj(obj: dict, acc: dict) -> None:
+            u = obj.get("usage")
+            if not isinstance(u, dict):
+                return
+            uncached = _as_int(u.get("input_tokens"))
+            if uncached is not None:
+                cr = _as_int(u.get("cache_read_input_tokens")) or 0
+                cw = _as_int(u.get("cache_creation_input_tokens")) or 0
+                acc["input"] = uncached + cr + cw
+                acc["cached"] = cr
+            out = _as_int(u.get("output_tokens"))
+            if out is not None:
+                acc["output"] = out
+
         async def _body_iter():
+            acc: dict = {}
+            body_buf = bytearray()          # non-stream: whole JSON body
+            tail = ""                       # stream: partial-line carry
             try:
-                async for chunk in up.resp.aiter_bytes():
+                if up.buffered is not None:
+                    # 非流式且已被 _try_account 校验/缓冲：直接回放，不再读上游
+                    chunk = up.buffered
+                    if stream:
+                        tail += chunk.decode("utf-8", "ignore")
+                    else:
+                        body_buf.extend(chunk)
                     yield chunk
+                else:
+                    async for chunk in up.resp.aiter_bytes():
+                        if stream:
+                            tail += chunk.decode("utf-8", "ignore")
+                            while "\n" in tail:
+                                line, tail = tail.split("\n", 1)
+                                if "\"usage\"" in line:
+                                    obj = _safe_json(line[5:].strip() if line.startswith("data:") else line)
+                                    if isinstance(obj, dict):
+                                        _usage_from_obj(obj, acc)
+                        elif len(body_buf) < 4 * 1024 * 1024:
+                            body_buf.extend(chunk)
+                        yield chunk
+                if not stream:
+                    obj = _safe_json(body_buf.decode("utf-8", "ignore"))
+                    if isinstance(obj, dict):
+                        _usage_from_obj(obj, acc)
                 logs.req_ok(req_id)
-                reqlog.finish_ok(req_id, t_first=up.t_first, status=up.resp.status_code)
+                reqlog.finish_ok(req_id, t_first=up.t_first, status=up.resp.status_code,
+                                 input_tokens=acc.get("input"),
+                                 output_tokens=acc.get("output"),
+                                 cached_tokens=acc.get("cached"))
             except asyncio.CancelledError:
                 reqlog.finish_error(req_id, "客户端断开", status=499, t_first=up.t_first)
                 raise
@@ -766,9 +826,65 @@ async def _try_account(req_id, account, body, incoming_headers, port, needs_capt
                 status_code=status_code,
             )
 
+        # ── HTTP 200 也可能是错误：上游把配额/风控错误塞在业务信封里 ──────────
+        # 实测 GLM：200 + {"code":1005,"msg":"exceed quota limit"}。不校验就会把
+        # 错误当成功透传（客户端拿到非法 JSON，监控记 ok=True），且账号不会被
+        # 标记，下一次又选中同一个已耗尽模型。
+        # 仅对非 SSE 响应校验：SSE 成功流的 body 不是单 JSON，不适合整体解析。
+        ctype = (resp.headers.get("content-type") or "").lower()
+        buffered: bytes | None = None
+        if "text/event-stream" not in ctype:
+            try:
+                buffered = await resp.aread()
+            except Exception as err:  # noqa: BLE001
+                logs.req_err(req_id, f"读取上游响应失败: {err}")
+                reqlog.finish_error(req_id, f"读取上游响应失败: {err}", status=502,
+                                    t_first=time.time() - attempt_t0)
+                return _NEXT_ACCOUNT
+            env = _safe_json(buffered.decode("utf-8", "ignore"))
+            if isinstance(env, dict) and isinstance(env.get("code"), int) and env.get("code") != 0:
+                code = env["code"]
+                msg = str(env.get("msg") or env.get("message") or "")
+                low = msg.lower()
+                is_quota = code in (1005,) or any(k in low for k in constants.EXHAUST_KEYWORDS)
+                if is_quota:
+                    # 单模型耗尽：只封这个模型，账号本身可能还有别的模型额度
+                    account.mark_model_exhausted(
+                        model_name, settings.MODEL_EXHAUST_SECONDS,
+                        f"模型 {model_name} 额度耗尽（上游 code {code}: {msg[:60]}）",
+                    )
+                    account.record_result(False, f"模型额度耗尽 code={code}")
+                    store.update_account(account)
+                    logs.warn(
+                        req_id,
+                        f"账号 {account.name} 模型 {model_name} 额度耗尽（code={code}），"
+                        f"{int(settings.MODEL_EXHAUST_SECONDS)}s 内跳过该模型，换下一个账号",
+                    )
+                    return _NEXT_ACCOUNT
+                # 其它业务码（如 3012 风控）：同样不能当成功
+                if _is_risk_control(status_code, msg):
+                    account.record_result(False, f"风控信封 code={code}")
+                    account.risk_penalty(
+                        settings.RISK_COOLDOWN_BASE, settings.RISK_COOLDOWN_MAX,
+                        settings.RISK_BAN_STRIKES, settings.RISK_STRIKE_DECAY_SECONDS,
+                    )
+                    store.update_account(account)
+                    logs.warn(req_id, f"账号 {account.name} 信封风控 code={code}，冷却后换号")
+                    return _NEXT_ACCOUNT
+                account.record_result(False, f"上游业务错误 code={code}: {msg[:80]}")
+                store.update_account(account)
+                reqlog.finish_error(req_id, f"上游 code={code}: {msg[:120]}", status=502,
+                                    t_first=time.time() - attempt_t0)
+                return JSONResponse(
+                    {"error": {"message": msg or f"上游业务错误 code={code}",
+                               "type": "upstream_error", "code": code}},
+                    status_code=502,
+                )
+
         # 成功：记录用量并把打开的上游流交给调用方
         account.use_count += 1
         account.last_used_at = time.time()
+        account.clear_model_exhausted(model_name)
         account.record_result(True, f"HTTP 200 · {model_name} · {time.time() - attempt_t0:.1f}s")
         # API Key 回退成功不得把废 JWT / 风控禁用洗成 active，也不得清风控计数；
         # 风控冷却未到期同样不洗（上游风控标记为小时级粘性，回退通道成功不代表
@@ -785,7 +901,8 @@ async def _try_account(req_id, account, body, incoming_headers, port, needs_capt
         _spawn_bg(_safe_refresh(account))
 
         return _Upstream(resp, cm, client, t_first=time.time() - attempt_t0,
-                         account_name=account.name, mode=account.mode)
+                         account_name=account.name, mode=account.mode,
+                         buffered=buffered)
 
 
 def _safe_json(text: str):

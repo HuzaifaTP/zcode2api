@@ -1,4 +1,4 @@
-/* zcode2api — Auth module (localStorage 加密存储后台密钥) */
+/* zcode2api — Auth module (localStorage stores the admin key encrypted) */
 const ADMIN_API = '/admin/api';
 
 const _ENC = new TextEncoder(), _DEC = new TextDecoder();
@@ -42,7 +42,7 @@ async function verifyKey(url,key){
 }
 function adminLogout(){adminKey.clear();location.href='/admin/login';}
 
-/* 统一的后台 API 调用封装 */
+/* shared admin API call wrapper */
 async function api(method,path,body){
   const key=await adminKey.get();
   const r=await fetch(ADMIN_API+path,{

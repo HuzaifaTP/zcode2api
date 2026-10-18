@@ -82,7 +82,7 @@ function chromeArgs(proxy) {
     "--disable-blink-features=AutomationControlled",
     "--disable-features=site-per-process",
     "--lang=zh-CN",
-    "--single-process", "--no-zygote", "--renderer-process-limit=1",
+    "--no-zygote", "--renderer-process-limit=1",
     "--disable-gpu", "--disable-software-rasterizer", "--disable-extensions",
     "--disable-background-networking", "--disable-default-apps",
     "--disable-component-update", "--disable-sync", "--no-first-run",

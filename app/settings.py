@@ -109,6 +109,14 @@ RISK_COOLDOWN_BASE = _int("ZCODE_RISK_COOLDOWN_BASE", 900)    # 首次冷却秒�
 RISK_COOLDOWN_MAX = _int("ZCODE_RISK_COOLDOWN_MAX", 86400)    # 冷却上限（24h）
 RISK_BAN_STRIKES = _int("ZCODE_RISK_BAN_STRIKES", 4)          # 窗口内累计命中达到即禁用
 RISK_STRIKE_DECAY_SECONDS = _int("ZCODE_RISK_STRIKE_DECAY_SECONDS", 7 * 86400)
+# 单模型额度耗尽后的跳过时长（秒）。上游把配额耗尽塞在 HTTP 200 信封里
+#（code 1005 / exceed quota），账号级 status 看不到，只能按模型记忆。
+# 默认 30 分钟：足以等到额度刷新（日额度 00:00 重置）或避开一个已耗尽的号。
+MODEL_EXHAUST_SECONDS = _int("ZCODE_MODEL_EXHAUST_SECONDS", 1800)
+
+# 请求监控落盘：monitoring.jsonl 的体积上限（超过则保留最新一半行）。
+# 默认 8 MB —— 500 条内存上限之外的历史磁盘缓冲，按行均 ~400B 估算约 2 万条。
+MONITORING_MAX_BYTES = _int("ZCODE_MONITORING_MAX_BYTES", 8 * 1024 * 1024)
 # 距上次风控命中超过该窗口则 strikes 重新起算：跨月偶发命中不累积成禁用
 RISK_AUTO_ROTATE = _bool("ZCODE_RISK_AUTO_ROTATE", True)
 # 风控升级禁用时自动换发设备指纹（新 SKU + 新 device_mid）并后台补跑安装序

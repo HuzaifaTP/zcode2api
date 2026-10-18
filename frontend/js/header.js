@@ -1,4 +1,4 @@
-/* 后台公共头部渲染 */
+/* shared admin header render */
 async function renderAdminHeader(){
   const mount=document.getElementById('admin-header');
   if(!mount)return;
@@ -6,9 +6,9 @@ async function renderAdminHeader(){
   try{const r=await fetch('/meta');if(r.ok)version='v'+(await r.json()).version;}catch{}
   const active=mount.dataset.active||location.pathname;
   const nav=[
-    ['/admin/accounts','账号池'],
-    ['/admin/monitoring','请求监控'],
-    ['/admin/settings','设置'],
+    ['/admin/accounts','Accounts'],
+    ['/admin/monitoring','Request monitoring'],
+    ['/admin/settings','Settings'],
   ].map(([href,label])=>
     `<a href="${href}" class="admin-nav-link${href===active?' active':''}">${label}</a>`
   ).join('');
@@ -21,7 +21,7 @@ async function renderAdminHeader(){
         <nav class="admin-nav">${nav}</nav>
         <div class="admin-header-right">
           ${version?`<span class="admin-header-version">${version}</span>`:''}
-          <button onclick="adminLogout()" class="admin-header-icon-btn" title="退出登录" aria-label="退出登录">
+          <button onclick="adminLogout()" class="admin-header-icon-btn" title="Sign out" aria-label="Sign out">
             <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
           </button>
         </div>

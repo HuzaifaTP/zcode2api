@@ -1,4 +1,4 @@
-/* Toast 通知 */
+/* Toast toasts */
 function _toastContainer(){
   let c=document.getElementById('toast-container');
   if(!c){c=document.createElement('div');c.id='toast-container';c.className='toast-container';document.body.appendChild(c);}

@@ -202,7 +202,15 @@ def anthropic_to_openai(data: dict, model: str) -> dict:
                 },
             })
     usage = data.get("usage") or {}
-    in_tok = _as_int(usage.get("input_tokens")) or 0
+    # Anthropic/GLM report `input_tokens` as the NON-CACHED portion only; the cached
+    # prefix arrives separately. OpenAI clients expect `prompt_tokens` to be the full
+    # prompt, otherwise context accounting under-counts by the whole cached prefix
+    # (observed 35 vs 7,523 on a warm 38 KB system prompt) and clients overfill
+    # context until upstream returns a hard 400.
+    uncached = _as_int(usage.get("input_tokens")) or 0
+    cache_read = _as_int(usage.get("cache_read_input_tokens")) or 0
+    cache_write = _as_int(usage.get("cache_creation_input_tokens")) or 0
+    in_tok = uncached + cache_read + cache_write
     out_tok = _as_int(usage.get("output_tokens")) or 0
     message: dict = {"role": "assistant", "content": "".join(text_parts) or None}
     if tool_calls:
@@ -217,7 +225,12 @@ def anthropic_to_openai(data: dict, model: str) -> dict:
             "message": message,
             "finish_reason": _STOP_REASON_MAP.get(data.get("stop_reason"), "stop"),
         }],
-        "usage": {"prompt_tokens": in_tok, "completion_tokens": out_tok, "total_tokens": in_tok + out_tok},
+        "usage": {
+            "prompt_tokens": in_tok,
+            "completion_tokens": out_tok,
+            "total_tokens": in_tok + out_tok,
+            "prompt_tokens_details": {"cached_tokens": cache_read},
+        },
     }
 
 
@@ -254,9 +267,16 @@ class StreamConverter:
             if msg.get("id"):
                 self.chunk_id = str(msg["id"])
             u = msg.get("usage") or {}
-            prompt = _as_int(u.get("input_tokens"))
-            if prompt is not None:
-                self.usage["prompt_tokens"] = prompt
+            # Same correction as the non-stream path: `input_tokens` is the non-cached
+            # portion; the cached prefix must be added for OpenAI's `prompt_tokens`.
+            uncached = _as_int(u.get("input_tokens"))
+            if uncached is not None:
+                cached = (_as_int(u.get("cache_read_input_tokens")) or 0) \
+                    + (_as_int(u.get("cache_creation_input_tokens")) or 0)
+                self.usage["prompt_tokens"] = uncached + cached
+                self.usage["prompt_tokens_details"] = {
+                    "cached_tokens": _as_int(u.get("cache_read_input_tokens")) or 0,
+                }
                 self._sync_usage_total()
             return []
         if etype == "content_block_start":
@@ -284,9 +304,21 @@ class StreamConverter:
         if etype == "message_delta":
             delta = evt.get("delta") or {}
             self.finish_reason = _STOP_REASON_MAP.get(delta.get("stop_reason"), "stop")
-            out = _as_int((evt.get("usage") or {}).get("output_tokens"))
+            du = evt.get("usage") or {}
+            out = _as_int(du.get("output_tokens"))
             if out is not None:
                 self.usage["completion_tokens"] = out
+            # Some upstreams only report the input side on message_delta.
+            uncached = _as_int(du.get("input_tokens"))
+            if uncached is not None:
+                cached = (_as_int(du.get("cache_read_input_tokens")) or 0) \
+                    + (_as_int(du.get("cache_creation_input_tokens")) or 0)
+                if uncached or cached:
+                    self.usage["prompt_tokens"] = uncached + cached
+                    self.usage["prompt_tokens_details"] = {
+                        "cached_tokens": _as_int(du.get("cache_read_input_tokens")) or 0,
+                    }
+            if out is not None or uncached is not None:
                 self._sync_usage_total()
             chunk = self._chunk({}, finish_reason=self.finish_reason)
             return [chunk]

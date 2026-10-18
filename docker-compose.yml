@@ -1,0 +1,22 @@
+services:
+  zcode-hub:
+    build: .
+    image: zcode-hub:latest
+    container_name: zcode-hub
+    ports:
+      # localhost only
+      - "127.0.0.1:3003:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      ZCODE_HOST: "0.0.0.0"
+      ZCODE_PORT: "3000"
+      ZCODE_DATA_DIR: /data
+      ZCODE_ADMIN_KEY: "zcode-admin-local"
+      ZCODE_GATEWAY_KEY: "zcode-hub-local"
+      # ── US egress proxy ────────────────────────────────────────────────────
+      # The repo's own note: /v1/messages direct connections get 3012
+      # "unusual activity"; it must go through an env proxy. Billing/quota stay
+      # DIRECT because app/claim.py pins trust_env=False, so this only affects
+      # the model-call path (gateway.py:616 uses httpx defaults → trust_env=True).
+    restart: unless-stopped

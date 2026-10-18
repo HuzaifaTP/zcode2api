@@ -40,6 +40,11 @@ class Account:
 
     # 额度快照：{ model_show_name: {total, used, remaining, expires_at} }
     quota: dict = field(default_factory=dict)
+    # 单模型耗尽记忆：{ model_name: until_ts }。上游把配额耗尽塞在 HTTP 200 的
+    # 业务信封里（实测 GLM：{"code":1005,"msg":"exceed quota limit"}），所以
+    # 账号级 status 感知不到「这个模型没额度了」。记住它，选号时跳过该模型，
+    # 否则每次都会选中同一个已耗尽的号，把可用号饿死。
+    model_exhausted: dict = field(default_factory=dict)
     plan: dict = field(default_factory=dict)        # 当前激活方案（billing/current plans[0]，兼容保留）
     plans: list = field(default_factory=list)       # 全部方案（上游 plans 数组；多套餐时 entitlements 不丢）
     usage: dict = field(default_factory=dict)       # 近期用量原始数据
@@ -136,13 +141,17 @@ class Account:
         entry = {"ok": bool(ok), "at": time.time(), "detail": str(detail or ("成功" if ok else "失败"))}
         self.recent_results = (self.recent_results + [entry])[-keep:]
 
-    def is_selectable(self, now: float | None = None) -> bool:
+    def is_selectable(self, now: float | None = None, model: str | None = None) -> bool:
         """是否可被轮询选中。
 
         JWT 失效 / 风控禁用后，若同账号有 API Key，仍可选中并走回退通道；
         手动 enabled=False 永远不选。
+
+        model 非空时额外跳过「该模型额度已耗尽」的账号（model_exhausted 记忆）。
         """
         if not self.enabled:
+            return False
+        if model and self.is_model_exhausted(model, now):
             return False
         if self.status == Status.EXHAUSTED:
             return False
@@ -152,6 +161,32 @@ class Account:
             now = now or time.time()
             return bool(self.cooling_until and now >= self.cooling_until)
         return True
+
+    # ── 单模型耗尽记忆 ────────────────────────────────────────────────────────
+    def is_model_exhausted(self, model: str, now: float | None = None) -> bool:
+        """该模型是否仍在耗尽窗口内（过期条目视为未耗尽）。"""
+        until = self.model_exhausted.get(model) if isinstance(self.model_exhausted, dict) else None
+        if not until:
+            return False
+        return (now or time.time()) < float(until)
+
+    def mark_model_exhausted(self, model: str, seconds: float, reason: str = "") -> None:
+        """记住某模型额度耗尽，seconds 内不再选本账号跑该模型。"""
+        if not isinstance(self.model_exhausted, dict):
+            self.model_exhausted = {}
+        self.model_exhausted[model] = time.time() + max(60.0, float(seconds))
+        if reason:
+            self.last_error = reason[:200]
+
+    def clear_model_exhausted(self, model: str | None = None) -> None:
+        """清空耗尽记忆（单模型或全部）——额度刷新/成功调用后调用。"""
+        if not isinstance(self.model_exhausted, dict):
+            self.model_exhausted = {}
+            return
+        if model is None:
+            self.model_exhausted.clear()
+            return
+        self.model_exhausted.pop(model, None)
 
     def is_cooling(self, now: float | None = None) -> bool:
         """冷却是否仍在生效（含风控指数退避）。冷却期内不应产生任何上游流量。"""
@@ -202,6 +237,7 @@ class Account:
             "use_count": self.use_count,
             "fail_count": self.fail_count,
             "risk_strikes": self.risk_strikes,
+            "model_exhausted": self.model_exhausted,
             "recent_results": self.recent_results,
             "last_used_at": self.last_used_at,
             "last_checked_at": self.last_checked_at,

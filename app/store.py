@@ -270,14 +270,19 @@ class Store:
             return True
 
     # ── 轮询选择 ─────────────────────────────────────────────────────────────
-    def select(self, provider: str, skip_ids: set[str] | None = None) -> Account | None:
-        """按 round-robin 选择下一个可用账号。用完 / 失效的自动跳过。"""
+    def select(self, provider: str, skip_ids: set[str] | None = None,
+               model: str | None = None) -> Account | None:
+        """按 round-robin 选择下一个可用账号。用完 / 失效的自动跳过。
+
+        model 非空时同时跳过「该模型额度已耗尽」的账号——上游把配额耗尽塞在
+        HTTP 200 信封里，账号级 status 看不到，只能靠 model_exhausted 记忆。
+        """
         skip_ids = skip_ids or set()
         now = time.time()
         with self._lock:
             pool = [
                 a for a in self._accounts.get(provider, [])
-                if a.is_selectable(now) and a.id not in skip_ids
+                if a.is_selectable(now, model=model) and a.id not in skip_ids
             ]
             if not pool:
                 return None
