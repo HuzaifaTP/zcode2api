@@ -54,6 +54,11 @@ async def admin_settings():
     return _html("settings.html")
 
 
+@router.get("/admin/usage", include_in_schema=False)
+async def admin_usage():
+    return _html("usage.html")
+
+
 @router.get("/meta", include_in_schema=False)
 async def meta():
     return {"version": settings.APP_VERSION}

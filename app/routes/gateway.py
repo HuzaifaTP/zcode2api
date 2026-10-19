@@ -586,7 +586,7 @@ async def _try_account(req_id, account, body, incoming_headers, port, needs_capt
     model_name = str(body.get("model") or "-")
     while True:
         attempt_t0 = time.time()
-        reqlog.mark_account(req_id, account.name, account.mode)
+        reqlog.mark_account(req_id, account.name, account.mode, account.id)
         verify_param = verify_region = None
         if needs_captcha:
             _park_slot(slot_box)

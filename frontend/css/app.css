@@ -297,3 +297,16 @@ select.input option{background:var(--panel);color:var(--ink)}
   .mon-grid-agg > :nth-child(n+6){display:none}
   .mon-search{width:100%}
 }
+
+/* Usage page: daily burn bars */
+.usage-chart{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;padding:16px 18px}
+.usage-bars{display:flex;align-items:flex-end;justify-content:flex-start;gap:6px;height:150px}
+.usage-bar-wrap{flex:1;min-width:10px;max-width:64px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;gap:6px}
+.usage-bar{width:100%;background:linear-gradient(180deg,var(--amber),rgba(232,163,61,.35));border-radius:4px 4px 0 0;min-height:2px;transition:height .2s}
+.usage-bar-wrap:hover .usage-bar{background:var(--amber)}
+.usage-bar-label{font-family:var(--mono);font-size:10px;color:var(--ink-mute);white-space:nowrap}
+
+/* Usage page tables: the shared table style is tight for 7 numeric columns */
+#accounts table th, #models table th,
+#accounts table td, #models table td{padding:8px 10px}
+#accounts table th:first-child, #models table th:first-child{min-width:180px}

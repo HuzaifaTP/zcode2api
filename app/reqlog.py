@@ -19,7 +19,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import settings
+from . import settings, usage_ledger
 
 KEEP = 500
 
@@ -104,6 +104,7 @@ def begin(req_id: str, endpoint: str, model: str, stream: bool, preview: str = "
         "stream": bool(stream),
         "preview": (preview or "")[:80],
         "account": "",
+        "account_id": "",
         "mode": "",
         "ok": None,
         "status": None,
@@ -119,12 +120,14 @@ def begin(req_id: str, endpoint: str, model: str, stream: bool, preview: str = "
         _inflight[req_id] = entry
 
 
-def mark_account(req_id: str, account_name: str, mode: str) -> None:
+def mark_account(req_id: str, account_name: str, mode: str,
+                 account_id: str = "") -> None:
     """记录实际服务该请求的账号（多账号重试时最后一次生效）。"""
     with _lock:
         entry = _inflight.get(req_id)
         if entry is not None:
             entry["account"] = account_name
+            entry["account_id"] = account_id or entry.get("account_id") or ""
             entry["mode"] = mode
 
 
@@ -145,6 +148,16 @@ def finish_ok(req_id: str, t_first: float | None = None,
         done = dict(entry)
     if _persist_enabled():
         _append_disk(done)
+    # 日聚合账本（按 日×账号×模型 持久化，供 /admin/api/usage 使用）
+    try:
+        usage_ledger.record(
+            done.get("account_id") or done.get("account") or "unknown",
+            done.get("account") or "",
+            done.get("model") or "-",
+            input_tokens, cached_tokens, output_tokens, ts=done.get("ts"),
+        )
+    except Exception:
+        pass
 
 
 def finish_error(req_id: str, error: str, status: int | None = None,

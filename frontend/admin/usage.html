@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>zcode-hub · Usage</title>
+  <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
+  <link href="/static/css/app.css?v={{APP_VERSION}}" rel="stylesheet">
+</head>
+<body>
+<div id="admin-header" data-active="/admin/usage"></div>
+
+<main class="admin-main">
+  <div class="page-hd">
+    <div>
+      <div class="page-title">Usage</div>
+      <div class="page-sub">Daily quota consumption per account and model</div>
+    </div>
+    <div class="page-actions">
+      <select class="input" id="range" onchange="load()" style="width:130px">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+      <button onclick="load()" class="page-action-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M20 11a8 8 0 0 0-14.6-4.6"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.6"/><path d="M20 20v-5h-5"/></svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div class="stat-grid" id="stats"></div>
+
+  <h2 style="margin:26px 0 12px">Daily burn</h2>
+  <div id="chart" class="usage-chart"></div>
+
+  <h2 style="margin:26px 0 12px">Per account</h2>
+  <div id="accounts"></div>
+
+  <h2 style="margin:26px 0 12px">Per model</h2>
+  <div id="models"></div>
+
+  <div class="hint" id="turns" style="margin-top:22px"></div>
+  <div class="hint" id="note" style="margin-top:10px"></div>
+</main>
+
+<script src="/static/js/toast.js?v={{APP_VERSION}}"></script>
+<script src="/static/js/auth.js?v={{APP_VERSION}}"></script>
+<script src="/static/js/header.js?v={{APP_VERSION}}"></script>
+<script>
+function fmt(n){
+  const v=Number(n)||0;
+  if(Math.abs(v)>=1e9)return (v/1e9).toFixed(2)+'B';
+  if(Math.abs(v)>=1e6)return (v/1e6).toFixed(2)+'M';
+  if(Math.abs(v)>=1e3)return (v/1e3).toFixed(1)+'K';
+  return String(Math.round(v));
+}
+function pct(v){return (Number(v)||0).toFixed(1)+'%';}
+
+function statCard(label, value, sub, tone){
+  return `<div class="stat-cell">
+    <div class="stat-top"><div class="stat-label">${label}</div></div>
+    <div class="stat-num"${tone?` style="color:var(--${tone})"`:''}>${value}</div>
+    <div class="stat-sub">${sub||''}</div>
+  </div>`;
+}
+
+function renderStats(t, days){
+  const perDay = days ? t.billed/days : 0;
+  document.getElementById('stats').innerHTML =
+      statCard('Quota used', fmt(t.billed), `${fmt(t.reqs)} requests`, 'amber')
+    + statCard('Cache hit', pct(t.hit_rate), `${fmt(t.cached)} of ${fmt(t.in)} input`, 'mint')
+    + statCard('Avg per day', fmt(perDay), `over ${days} day${days===1?'':'s'}`)
+    + statCard('Output', fmt(t.out), 'completion tokens');
+}
+
+function renderChart(daily){
+  const days=Object.keys(daily).sort();
+  if(!days.length){document.getElementById('chart').innerHTML='<div class="empty-state">No usage recorded yet</div>';return;}
+  const max=Math.max(1,...days.map(d=>daily[d].billed));
+  const bars=days.map(d=>{
+    const v=daily[d];
+    const h=Math.max(2, Math.round(v.billed/max*100));
+    const hit=v.hit_rate||0;
+    return `<div class="usage-bar-wrap" title="${d} · billed ${fmt(v.billed)} · hit ${pct(hit)} · ${v.reqs} reqs">
+      <div class="usage-bar" style="height:${h}%"></div>
+      <div class="usage-bar-label">${d.slice(5)}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('chart').innerHTML=`<div class="usage-bars">${bars}</div>`;
+}
+
+function table(title, rows, keyLabel){
+  const head=`<div class="table-wrap"><table><thead><tr>
+    <th style="text-align:left">${keyLabel}</th>
+    <th style="text-align:right">Requests</th>
+    <th style="text-align:right">Input</th>
+    <th style="text-align:right">Cached</th>
+    <th style="text-align:right">Cache hit</th>
+    <th style="text-align:right">Output</th>
+    <th style="text-align:right">Quota</th>
+  </tr></thead><tbody>`;
+  const body=rows.map(([name,v])=>`<tr>
+    <td style="text-align:left">${esc(name)}</td>
+    <td style="text-align:right">${fmt(v.reqs)}</td>
+    <td style="text-align:right">${fmt(v.in)}</td>
+    <td style="text-align:right">${fmt(v.cached)}</td>
+    <td style="text-align:right">${pct(v.hit_rate)}</td>
+    <td style="text-align:right">${fmt(v.out)}</td>
+    <td style="text-align:right"><b style="color:var(--amber)">${fmt(v.billed)}</b></td>
+  </tr>`).join('');
+  return head+body+'</tbody></table></div>';
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function load(){
+  const days=document.getElementById('range').value;
+  let d;
+  try{
+    d=await api('GET','/usage?days='+encodeURIComponent(days));
+  }catch(e){
+    showToast('Failed to load usage','error');
+    return;
+  }
+  const t=d.total||{};
+  renderStats(t, (d.days||[]).length);
+  renderChart(d.daily||{});
+
+  const accRows=Object.entries(d.accounts||{}).sort((a,b)=>b[1].billed-a[1].billed);
+  document.getElementById('accounts').innerHTML = accRows.length
+    ? table('Accounts', accRows.map(([id,v])=>[v.name||id, v]), 'Account')
+    : '<div class="empty-state">No accounts recorded</div>';
+
+  const modRows=Object.entries(d.models||{}).sort((a,b)=>b[1].billed-a[1].billed);
+  document.getElementById('models').innerHTML = modRows.length
+    ? table('Models', modRows, 'Model')
+    : '<div class="empty-state">No models recorded</div>';
+
+  // Derived: how many turns of *this average size* one account's daily grant buys
+  const grant = 3_000_000;  // GLM-5.3 daily grant per account
+  const avg = (t.reqs ? t.billed / t.reqs : 0);
+  const turns = avg > 0 ? Math.floor(grant / avg) : 0;
+  const el = document.getElementById('turns');
+  if (el) el.innerHTML = avg > 0
+    ? `Average request: <b>${fmt(avg)}</b> quota tokens → one GLM-5.3 account (3M/day) covers only <b>${turns}</b> such turns per day.`
+    : '';
+
+  document.getElementById('note').textContent =
+    `Quota used = input + output. Cache hits do NOT reduce quota (verified 6/6: ` +
+    `rate = 1.00 on warm requests) — caching only saves latency, not free-trial credits. ` +
+    `Retention: ${d.retention_days} days.`;
+}
+
+(async()=>{
+  const key=await adminKey.get();
+  if(!key||!await verifyKey(ADMIN_API+'/verify',key).catch(()=>false))return location.href='/admin/login';
+  await renderAdminHeader();
+  await load();
+})();
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ async function renderAdminHeader(){
   const nav=[
     ['/admin/accounts','Accounts'],
     ['/admin/monitoring','Request monitoring'],
+    ['/admin/usage','Usage'],
     ['/admin/settings','Settings'],
   ].map(([href,label])=>
     `<a href="${href}" class="admin-nav-link${href===active?' active':''}">${label}</a>`

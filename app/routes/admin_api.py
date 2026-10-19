@@ -8,7 +8,7 @@ import time
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from .. import logs, reqlog
+from .. import logs, reqlog, usage_ledger
 from ..auth_admin import verify_admin_key
 from ..captcha import CaptchaSolveError
 from ..claim import (
@@ -631,6 +631,15 @@ async def import_accounts(payload: dict = Body(...)):
 async def monitoring():
     """网关请求环形日志（内存态，重启清零）。前端自行聚合统计。"""
     return {"entries": reqlog.snapshot(), "keep": reqlog.KEEP}
+
+
+@router.get("/usage")
+async def usage(days: int = 30):
+    """日聚合用量账本：按日 / 按账号 / 按模型，含缓存命中率与折后计费量。
+
+    计费口径：billed = 输入 + 输出（实测：命中缓存也全额计入额度，缓存不减免）。
+    """
+    return usage_ledger.snapshot(days=max(1, min(int(days or 30), 365)))
 
 
 @router.post("/monitoring/clear")

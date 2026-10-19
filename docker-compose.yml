@@ -14,6 +14,9 @@ services:
       ZCODE_DATA_DIR: /data
       ZCODE_ADMIN_KEY: "zcode-admin-local"
       ZCODE_GATEWAY_KEY: "zcode-hub-local"
+      # Align with the upstream daily quota reset (23:59 UTC+8) and keep
+      # usage-ledger day buckets matching what /quota reports.
+      TZ: "Asia/Shanghai"
       # ── US egress proxy ────────────────────────────────────────────────────
       # The repo's own note: /v1/messages direct connections get 3012
       # "unusual activity"; it must go through an env proxy. Billing/quota stay
